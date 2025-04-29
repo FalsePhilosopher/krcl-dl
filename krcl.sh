@@ -4,14 +4,11 @@
 
 set -e
 
-# Function to scrape live show list (NO echo here)
 scrape_shows() {
     curl -s https://krcl.org/shows/ | grep -oP '(?<=href="/shows/)[^"/]+' | sort -u | grep -vE '^(about|events|shows|rss|news|programs|genre|support)'
     curl -s https://krcl.org/shows/ | grep -oP '(?<=href="/)[^"/]+' | sort -u | grep -vE '^(about|events|shows|rss|news|programs|genre|support)'
 }
 
-# Now safe to echo separately
-echo "Scraping live show list from KRCL..."
 shows=($(scrape_shows))
 
 if [ ${#shows[@]} -eq 0 ]; then
@@ -24,16 +21,13 @@ for i in "${!shows[@]}"; do
     printf "%3d) %s\n" $((i+1)) "${shows[$i]}"
 done
 
-# User selects show
 read -p "Select a show number: " show_number
 selected_show="${shows[$((show_number-1))]}"
 
-# Get user preferences
 read -p "How many months back? (3/6/9/12/24/64): " months
 read -p "What day of the week does it air? (1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun): " weekday_target
 read -p "What start time? (example: 22-00-00): " start_time
 
-# Confirm
 echo "Downloading $selected_show for the last $months months, every $weekday_target at $start_time..."
 
 base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$selected_show"
