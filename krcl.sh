@@ -30,6 +30,9 @@ selected_show="${shows[$((show_number-1))]}"
 
 # Get user preferences
 read -p "How many months back? (3/6/9/12/24/64): " months
+read -p "What day of the week does it air? (1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat, 7=Sun): " weekday_target
+read -p "What start time? (example: 22-00-00): " start_time
+
 # Confirm
 echo "Downloading $selected_show for the last $months months, every $weekday_target at $start_time..."
 
