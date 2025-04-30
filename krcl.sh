@@ -43,8 +43,6 @@ while IFS= read -r line; do
     fi
 done < "$INPUT"
 
-rm krcl_shows.html
-
 # Prompt user for show + months
 shows=($(scrape_shows))
 
@@ -85,7 +83,8 @@ else
     echo "Auto-detected: $day_name ($weekday_target), $start_time"
 fi
 
-# Begin downloading
+rm krcl_shows.html schedule.tsv
+
 base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$selected_show"
 
 mkdir -p "$selected_show"
