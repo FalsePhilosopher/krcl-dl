@@ -12,7 +12,6 @@ scrape_shows() {
         | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
 }
 
-
 # Scrape show schedule into schedule.tsv with slug column
 echo -e "Day\tShow\tStart\tSlug" > schedule.tsv
 DAY=""
@@ -43,6 +42,8 @@ while IFS= read -r line; do
         fi
     fi
 done < "$INPUT"
+
+rm krcl_shows.html
 
 # Prompt user for show + months
 shows=($(scrape_shows))
@@ -83,7 +84,6 @@ else
     weekday_target=$(date -d "$day_name" +%u)
     echo "Auto-detected: $day_name ($weekday_target), $start_time"
 fi
-
 
 # Begin downloading
 base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$selected_show"
