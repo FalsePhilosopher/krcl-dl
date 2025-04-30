@@ -66,20 +66,20 @@ read -p "How many months back? (3/6/9/12/24/64): " months
 schedule_match=$(awk -F '\t' -v slug="$selected_show" 'tolower($4) == slug {print $0; exit}' schedule.tsv)
 
 if [ -z "$schedule_match" ]; then
-    # Use fallback title from anchor tags
-    fallback_title="${SLUG_TO_TITLE[$selected_show]}"
-    if [ -z "$fallback_title" ]; then
-        echo "Could not find a title for slug: $selected_show"
-        exit 1
-    fi
-
-    echo "No schedule entry for '$fallback_title' — using fallback: Sunday 00:00:00"
-    day_name="Sunday"
-    start_time="00:00:00"
-    weekday_target=7
+    # If no match found, use the selected_show name
+    echo "Could not find a schedule entry for '$selected_show'."
+    read -p "What time does '$selected_show' start? (HH:MM format, 24-hour clock): " user_time
+    # Validate user input
+    while [[ ! "$user_time" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; do
+        echo "Invalid time format. Please enter the time in HH:MM format (24-hour clock)."
+        read -p "Enter the start time for '$selected_show' (HH:MM format, 24-hour clock): " user_time
+    done
+    start_time="${user_time//:/-}-00"
+    day_name="Sunday"  # Defaulting to Sunday, adjust as needed
+    weekday_target=7   # Sunday = 7
 else
     day_name=$(echo "$schedule_match" | cut -f1)
-    start_time=$(echo "$schedule_match" | cut -f3)
+    start_time=$(echo "$schedule_match" | cut -f3 | sed 's/:/-/g')
     weekday_target=$(date -d "$day_name" +%u)
     echo "Auto-detected: $day_name ($weekday_target), $start_time"
 fi
@@ -95,10 +95,25 @@ start_date=$(date +%Y-%m-%d)
 end_date=$(date -d "$start_date -$months months" +%Y-%m-%d)
 current_date="$start_date"
 
+# If the start time is unknown, prompt the user for input
+if [[ "$start_time" == "unknown" ]]; then
+    echo "The start time for the show '$selected_show' is unknown."
+    read -p "Please enter the start time for this show (HH:MM format, 24-hour clock ie 19:00 for 7 p.m): " user_time
+    # Validate user input
+    while [[ ! "$user_time" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; do
+        echo "Invalid time format. Please enter the time in HH:MM format (24-hour clock)."
+        read -p "Enter the start time for this show (HH:MM format, 24-hour clock): " user_time
+    done
+    # Format the time into 22-00-00 format
+    start_time="${user_time//:/-}-00"
+fi
+
 while [[ "$current_date" > "$end_date" ]]; do
     weekday=$(date -d "$current_date" +%u)
     if [[ "$weekday" -eq "$weekday_target" ]]; then
-        filename="${selected_show}_${current_date}_${start_time//:/-}.mp3"
+        # Replace colons in start_time with dashes for the filename
+        formatted_start_time="${start_time//:/-}"
+        filename="${selected_show}_${current_date}_${formatted_start_time}.mp3"
         file_url="$base_url/$filename"
 
         if [[ -f "$filename" ]]; then
