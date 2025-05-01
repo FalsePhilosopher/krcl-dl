@@ -36,12 +36,17 @@ jobs:
             mv shows_* krcl_output/ 2>/dev/null || true
           done
 
-      - name: Compress all shows with zstd
+      - name: Compress each show individually
         run: |
-          tar -I 'zstd -T0 -19' -cf krcl_shows.tar.zst krcl_output
+          cd krcl_output
+          for show in *; do
+            if [ -d "$show" ]; then
+              tar -I 'zstd -T0 -19' -cf "${show}.tzst" "$show"
+            fi
+          done
 
-      - name: Upload archive
+      - name: Upload archives
         uses: actions/upload-artifact@v4
         with:
-          name: krcl_shows_archive
-          path: krcl_shows.tar.zst
+          name: krcl_shows_archives
+          path: krcl_output/*.tzst
