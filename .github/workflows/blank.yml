@@ -1,0 +1,47 @@
+name: KRCL Show Archiver
+
+on:
+  workflow_dispatch:
+
+jobs:
+  archive-shows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y curl jq zstd tar
+
+      - name: Make working directory
+        run: mkdir -p krcl_output
+
+      - name: Download shows (last 12 months)
+        run: |
+          chmod +x krcl.sh
+
+          # Calculate the past 12 months' dates in YYYY-MM format
+          for i in {0..11}; do
+            DATE=$(date -d "-$i month" +%Y-%m)
+            echo "Downloading shows for $DATE..."
+
+            # Optional: export this date to KRCL_DATE if your script supports date targeting
+            export KRCL_DATE="$DATE"
+            
+            ./krcl.sh "$DATE" || echo "Failed on $DATE, continuing..."
+
+            # Move downloaded files into output directory per month (adjust path if your script uses a different layout)
+            mv shows_* krcl_output/ 2>/dev/null || true
+          done
+
+      - name: Compress all shows with zstd
+        run: |
+          tar -I 'zstd -T0 -19' -cf krcl_shows.tar.zst krcl_output
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: krcl_shows_archive
+          path: krcl_shows.tar.zst
