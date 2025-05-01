@@ -1,10 +1,15 @@
 #!/bin/bash
 
+dir="$(pwd)"
+input_file="$dir/krcl_shows.html"
+schedule_file="$dir/schedule.tsv"
+
 trap 'cleanup' SIGINT
 
 cleanup() {
     echo -e "\nInterrupted or exiting, cleaning up now"
-    rm krcl_shows.html schedule.tsv
+    rm "$input_file"
+    rm "$schedule_file"
     kill 0
     exit 1
 }
@@ -113,7 +118,7 @@ while [[ "$current_date" > "$end_date" ]]; do
             echo "Already downloaded: $filename, skipping."
         else
             if wget -q --show-progress --no-use-server-timestamps "$file_url"; then
-                echo "found! Downloading..."
+                echo "All done"
             else
                 echo "not found, skipping."
             fi
@@ -121,7 +126,6 @@ while [[ "$current_date" > "$end_date" ]]; do
     fi
     current_date=$(date -d "$current_date -1 day" +%Y-%m-%d)
 done
-echo "Done!"
 
 read -rp "Download more shows? [y/N]: " answer
 case "$answer" in
