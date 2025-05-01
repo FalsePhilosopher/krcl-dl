@@ -19,7 +19,7 @@ jobs:
         sudo apt-get install -y wget zstd
 
     - name: Download KRCL Shows Page
-      run: curl -s https://krcl.org/shows/ > krcl_shows.html
+      run: curl -s https://krcl.org/shows/ -o krcl_shows.html || { echo "Failed to download krcl_shows.html"; exit 1; }
 
     - name: Scrape Shows and Generate Schedule
       id: scrape_schedule
