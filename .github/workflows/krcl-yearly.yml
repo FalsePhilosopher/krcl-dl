@@ -1,0 +1,108 @@
+name: KRCL Show Archiver (Yearly Backup)
+
+on:
+  schedule:
+    - cron: '0 0 1 1 *' # Runs at midnight UTC on January 1st every year
+  workflow_dispatch: # Optional manual trigger for testing
+
+jobs:
+  archive-shows:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget zstd
+
+    - name: Download KRCL Shows Page
+      run: curl -s https://krcl.org/shows/ > krcl_shows.html
+
+    - name: Scrape Shows and Generate Schedule
+      id: scrape_schedule
+      run: |
+        INPUT="krcl_shows.html"
+        scrape_shows() {
+          grep -oP 'href="/(shows|programs)?/?[^"/]+/' "$INPUT" \
+              | sed -E 's/^href="\/(shows|programs)?\/?([^"/]+)\/.*$/\2/' \
+              | sort -u \
+              | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|cdn-images.mailchimp.com|cdn.jsdelivr.net|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
+        }
+        echo -e "Day\tShow\tStart\tSlug" > schedule.tsv
+        DAY=""
+        while IFS= read -r line; do
+          if [[ $line =~ \<th\>([A-Za-z]+)\<\/th\> ]]; then
+              DAY="${BASH_REMATCH[1]}"
+          fi
+          if [[ $line =~ \<h6\>(.+)\<\/h6\> ]]; then
+              SHOW="${BASH_REMATCH[1]//&amp;/&}"
+              SLUG=$(echo "$SHOW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed 's/^-//;s/-$//')
+          fi
+          if [[ $line =~ \<p\>(.+)\<\/p\> ]]; then
+              TIME="${BASH_REMATCH[1]}"
+              START=$(echo "$TIME" | cut -d'-' -f1 | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+              LOW=$(echo "$START" | tr '[:upper:]' '[:lower:]')
+              if echo "$START" | grep -iqE 'am|pm'; then
+                  START24=$(date -d "$START" +%H:%M:%S 2>/dev/null)
+              elif [[ "$LOW" == "midnight" ]]; then
+                  START24="00:00:00"
+              elif [[ "$LOW" == "noon" ]]; then
+                  START24="12:00:00"
+              else
+                  START24="unknown"
+              fi
+              if [[ -n "$DAY" && -n "$SHOW" && -n "$START24" ]]; then
+                  echo -e "$DAY\t$SHOW\t$START24\t$SLUG" >> schedule.tsv
+                  SHOW=""
+              fi
+          fi
+        done < "$INPUT"
+
+    - name: Archive All Shows
+      run: |
+        while IFS=$'\t' read -r day_name show_name start_time slug; do
+          if [[ "$day_name" == "Day" ]]; then
+            continue # Skip header line
+          fi
+          echo "Processing show: $show_name ($slug)"
+
+          # Setup variables
+          base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$slug"
+          mkdir -p "$slug"
+          cd "$slug" || exit 1
+          start_date=$(date +%Y-%m-%d)
+          end_date=$(date -d "$start_date -1 year" +%Y-%m-%d) # Backup for the past year
+          current_date="$start_date"
+
+          while [[ "$current_date" > "$end_date" ]]; do
+            weekday=$(date -d "$current_date" +%u)
+            weekday_target=$(date -d "$day_name" +%u)
+            if [[ "$weekday" -eq "$weekday_target" ]]; then
+              formatted_start_time="${start_time//:/-}"
+              filename="${slug}_${current_date}_${formatted_start_time}.mp3"
+              file_url="$base_url/$filename"
+              if [[ -f "$filename" ]]; then
+                echo "Already downloaded: $filename, skipping."
+              else
+                if wget -q --show-progress --no-use-server-timestamps "$file_url"; then
+                  echo "Found! Downloading $filename..."
+                else
+                  echo "Not found, skipping $filename."
+                fi
+              fi
+            fi
+            current_date=$(date -d "$current_date -1 day" +%Y-%m-%d)
+          done
+          cd ..
+          tar --zstd -cf "${slug}.tar.zst" "$slug"
+          rm -rf "$slug"
+        done < schedule.tsv
+
+    - name: Upload All Archives
+      uses: actions/upload-artifact@v3
+      with:
+        name: krcl-yearly-show-archives
+        path: ./*.tar.zst
