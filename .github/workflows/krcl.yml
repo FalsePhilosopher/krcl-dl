@@ -1,53 +1,108 @@
-name: KRCL Show Archiver
+name: KRCL Show Archiver (Monthly Backup)
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 0 1 * *' # Runs at midnight UTC on the 1st of every month
+  workflow_dispatch: # Optional manual trigger for testing
 
 jobs:
   archive-shows:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y curl jq zstd tar
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget zstd
 
-      - name: Make working directory
-        run: mkdir -p krcl_output
+    - name: Download KRCL Shows Page
+      run: curl -s https://krcl.org/shows/ > krcl_shows.html
 
-      - name: Download and archive each show individually
-        run: |
-          chmod +x krcl.sh
+    - name: Scrape Shows and Generate Schedule
+      id: scrape_schedule
+      run: |
+        INPUT="krcl_shows.html"
+        scrape_shows() {
+          grep -oP 'href="/(shows|programs)?/?[^"/]+/' "$INPUT" \
+              | sed -E 's/^href="\/(shows|programs)?\/?([^"/]+)\/.*$/\2/' \
+              | sort -u \
+              | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|cdn-images.mailchimp.com|cdn.jsdelivr.net|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
+        }
+        echo -e "Day\tShow\tStart\tSlug" > schedule.tsv
+        DAY=""
+        while IFS= read -r line; do
+          if [[ $line =~ \<th\>([A-Za-z]+)\<\/th\> ]]; then
+              DAY="${BASH_REMATCH[1]}"
+          fi
+          if [[ $line =~ \<h6\>(.+)\<\/h6\> ]]; then
+              SHOW="${BASH_REMATCH[1]//&amp;/&}"
+              SLUG=$(echo "$SHOW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed 's/^-//;s/-$//')
+          fi
+          if [[ $line =~ \<p\>(.+)\<\/p\> ]]; then
+              TIME="${BASH_REMATCH[1]}"
+              START=$(echo "$TIME" | cut -d'-' -f1 | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+              LOW=$(echo "$START" | tr '[:upper:]' '[:lower:]')
+              if echo "$START" | grep -iqE 'am|pm'; then
+                  START24=$(date -d "$START" +%H:%M:%S 2>/dev/null)
+              elif [[ "$LOW" == "midnight" ]]; then
+                  START24="00:00:00"
+              elif [[ "$LOW" == "noon" ]]; then
+                  START24="12:00:00"
+              else
+                  START24="unknown"
+              fi
+              if [[ -n "$DAY" && -n "$SHOW" && -n "$START24" ]]; then
+                  echo -e "$DAY\t$SHOW\t$START24\t$SLUG" >> schedule.tsv
+                  SHOW=""
+              fi
+          fi
+        done < "$INPUT"
 
-          # Loop through the past 12 months
-          for i in {0..11}; do
-            DATE=$(date -d "-$i month" +%Y-%m)
-            echo "Processing shows for $DATE..."
+    - name: Archive All Shows
+      run: |
+        while IFS=$'\t' read -r day_name show_name start_time slug; do
+          if [[ "$day_name" == "Day" ]]; then
+            continue # Skip header line
+          fi
+          echo "Processing show: $show_name ($slug)"
 
-            # Use krcl.sh scraping logic to get the list of shows
-            AVAILABLE_SHOWS=$(./krcl.sh "$DATE" | grep -oP '(?<=  )[0-9]+\) [^\)]+$' | awk '{print $2}')
-            
-            # Iterate over each show and download, then archive it
-            for SHOW in $AVAILABLE_SHOWS; do
-              echo "Downloading and archiving show: $SHOW for $DATE..."
+          # Setup variables
+          base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$slug"
+          mkdir -p "$slug"
+          cd "$slug" || exit 1
+          start_date=$(date +%Y-%m-%d)
+          end_date=$(date -d "$start_date -1 month" +%Y-%m-%d) # Backup for the past month
+          current_date="$start_date"
 
-              # Simulate downloading the show (replace with actual logic if needed)
-              mkdir -p "krcl_output/$SHOW"
-              echo "Mock content for $SHOW on $DATE" > "krcl_output/$SHOW/${SHOW}_${DATE}.mp3"
-
-              # Archive the downloaded show
-              tar -I 'zstd -T0 -19' -cf "krcl_output/${SHOW}_${DATE}.tzst" "krcl_output/$SHOW"
-
-              # Clean up the temporary files for the show
-              rm -rf "krcl_output/$SHOW"
-            done
+          while [[ "$current_date" > "$end_date" ]]; do
+            weekday=$(date -d "$current_date" +%u)
+            weekday_target=$(date -d "$day_name" +%u)
+            if [[ "$weekday" -eq "$weekday_target" ]]; then
+              formatted_start_time="${start_time//:/-}"
+              filename="${slug}_${current_date}_${formatted_start_time}.mp3"
+              file_url="$base_url/$filename"
+              if [[ -f "$filename" ]]; then
+                echo "Already downloaded: $filename, skipping."
+              else
+                if wget -q --show-progress --no-use-server-timestamps "$file_url"; then
+                  echo "Found! Downloading $filename..."
+                else
+                  echo "Not found, skipping $filename."
+                fi
+              fi
+            fi
+            current_date=$(date -d "$current_date -1 day" +%Y-%m-%d)
           done
+          cd ..
+          tar --zstd -cf "${slug}.tar.zst" "$slug"
+          rm -rf "$slug"
+        done < schedule.tsv
 
-      - name: Upload individual archives
-        uses: actions/upload-artifact@v4
-        with:
-          name: krcl_individual_show_archives
-          path: krcl_output/*.tzst
+    - name: Upload All Archives
+      uses: actions/upload-artifact@v3
+      with:
+        name: krcl-show-archives
+        path: ./*.tar.zst
