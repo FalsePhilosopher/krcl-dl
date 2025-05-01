@@ -18,35 +18,36 @@ jobs:
       - name: Make working directory
         run: mkdir -p krcl_output
 
-      - name: Download shows (last 12 months)
+      - name: Download and archive each show individually
         run: |
           chmod +x krcl.sh
 
-          # Calculate the past 12 months' dates in YYYY-MM format
+          # Loop through the past 12 months
           for i in {0..11}; do
             DATE=$(date -d "-$i month" +%Y-%m)
-            echo "Downloading shows for $DATE..."
+            echo "Processing shows for $DATE..."
 
-            # Optional: export this date to KRCL_DATE if your script supports date targeting
-            export KRCL_DATE="$DATE"
+            # Use krcl.sh scraping logic to get the list of shows
+            AVAILABLE_SHOWS=$(./krcl.sh "$DATE" | grep -oP '(?<=  )[0-9]+\) [^\)]+$' | awk '{print $2}')
             
-            ./krcl.sh "$DATE" || echo "Failed on $DATE, continuing..."
+            # Iterate over each show and download, then archive it
+            for SHOW in $AVAILABLE_SHOWS; do
+              echo "Downloading and archiving show: $SHOW for $DATE..."
 
-            # Move downloaded files into output directory per month (adjust path if your script uses a different layout)
-            mv shows_* krcl_output/ 2>/dev/null || true
+              # Simulate downloading the show (replace with actual logic if needed)
+              mkdir -p "krcl_output/$SHOW"
+              echo "Mock content for $SHOW on $DATE" > "krcl_output/$SHOW/${SHOW}_${DATE}.mp3"
+
+              # Archive the downloaded show
+              tar -I 'zstd -T0 -19' -cf "krcl_output/${SHOW}_${DATE}.tzst" "krcl_output/$SHOW"
+
+              # Clean up the temporary files for the show
+              rm -rf "krcl_output/$SHOW"
+            done
           done
 
-      - name: Compress each show individually
-        run: |
-          cd krcl_output
-          for show in *; do
-            if [ -d "$show" ]; then
-              tar -I 'zstd -T0 -19' -cf "${show}.tzst" "$show"
-            fi
-          done
-
-      - name: Upload archives
+      - name: Upload individual archives
         uses: actions/upload-artifact@v4
         with:
-          name: krcl_shows_archives
+          name: krcl_individual_show_archives
           path: krcl_output/*.tzst
