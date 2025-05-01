@@ -1,14 +1,14 @@
 #!/bin/bash
 
 dir="$(pwd)"
-input_file="$dir/krcl_shows.html"
+input="$dir/krcl_shows.html"
 schedule_file="$dir/schedule.tsv"
 
 trap 'cleanup' SIGINT
 
 cleanup() {
-    echo -e "\nInterrupted or exiting, cleaning up now"
-    rm "$input_file"
+    echo -e "\nInterrupted or exiting, cleaning up now."
+    rm "$input"
     rm "$schedule_file"
     kill 0
     exit 1
@@ -16,10 +16,8 @@ cleanup() {
 
 curl -s https://krcl.org/shows/ > krcl_shows.html
 
-INPUT="krcl_shows.html"
-
 scrape_shows() {
-    grep -oP 'href="/(shows|programs)?/?[^"/]+/' "$INPUT" \
+    grep -oP 'href="/(shows|programs)?/?[^"/]+/' "$input" \
         | sed -E 's/^href="\/(shows|programs)?\/?([^"/]+)\/.*$/\2/' \
         | sort -u \
         | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|cdn-images.mailchimp.com|cdn.jsdelivr.net|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
@@ -53,7 +51,7 @@ while IFS= read -r line; do
             SHOW=""
         fi
     fi
-done < "$INPUT"
+done < "$input"
 
 mapfile -t shows < <(scrape_shows)
 if [ ${#shows[@]} -eq 0 ]; then
