@@ -1,18 +1,25 @@
 #!/bin/bash
 
+trap 'cleanup' SIGINT
+
+cleanup() {
+    echo -e "\nInterrupted or exiting, cleaning up now"
+    rm krcl_shows.html schedule.tsv
+    kill 0
+    exit 1
+}
+
 curl -s https://krcl.org/shows/ > krcl_shows.html
 
 INPUT="krcl_shows.html"
 
-# Extract unique show names
 scrape_shows() {
     grep -oP 'href="/(shows|programs)?/?[^"/]+/' "$INPUT" \
         | sed -E 's/^href="\/(shows|programs)?\/?([^"/]+)\/.*$/\2/' \
         | sort -u \
-        | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
+        | grep -vE '^(about|events|shows|blog|community-affairs|community-stories|galleries|govote|music-features|short-stories|support-1|sundance|listeners-community-radio-of-utah-is-a-501c3-registered-non-profit-ein-87-0322222|krcl-mix|cdn-images.mailchimp.com|cdn.jsdelivr.net|random-shuffle|rss|news|programs|genre|support|donate|contact|volunteer|feedback|search)$'
 }
 
-# Scrape show schedule into schedule.tsv with slug column
 echo -e "Day\tShow\tStart\tSlug" > schedule.tsv
 DAY=""
 while IFS= read -r line; do
@@ -20,7 +27,7 @@ while IFS= read -r line; do
         DAY="${BASH_REMATCH[1]}"
     fi
     if [[ $line =~ \<h6\>(.+)\<\/h6\> ]]; then
-        SHOW=$(echo "${BASH_REMATCH[1]}" | sed 's/&amp;/\&/g')
+        SHOW="${BASH_REMATCH[1]//&amp;/&}"
         SLUG=$(echo "$SHOW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed 's/^-//;s/-$//')
     fi
     if [[ $line =~ \<p\>(.+)\<\/p\> ]]; then
@@ -43,35 +50,29 @@ while IFS= read -r line; do
     fi
 done < "$INPUT"
 
-# Prompt user for show + months
-shows=($(scrape_shows))
-
+mapfile -t shows < <(scrape_shows)
 if [ ${#shows[@]} -eq 0 ]; then
     echo "Failed to fetch show list. Exiting."
     exit 1
 fi
-
 echo "Available shows:"
 for i in "${!shows[@]}"; do
     printf "%3d) %s\n" $((i+1)) "${shows[$i]}"
 done
-
-read -p "Select a show number: " show_number
+read -rp "Select a show number: " show_number
 selected_show="${shows[$((show_number-1))]}"
-
-read -p "How many months back? (3/6/9/12/24/64): " months
+read -rp "How many months back? (3/6/9/12/24/64): " months
 
 # Try to match schedule entry by slug
 schedule_match=$(awk -F '\t' -v slug="$selected_show" 'tolower($4) == slug {print $0; exit}' schedule.tsv)
-
 if [ -z "$schedule_match" ]; then
     # If no match found, use the selected_show name
     echo "Could not find a schedule entry for '$selected_show'."
-    read -p "What time does '$selected_show' start? (HH:MM format, 24-hour clock): " user_time
+    read -rp "What time does '$selected_show' start? (HH:MM format, 24-hour clock): " user_time
     # Validate user input
     while [[ ! "$user_time" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; do
         echo "Invalid time format. Please enter the time in HH:MM format (24-hour clock)."
-        read -p "Enter the start time for '$selected_show' (HH:MM format, 24-hour clock): " user_time
+        read -rp "Enter the start time for '$selected_show' (HH:MM format, 24-hour clock): " user_time
     done
     start_time="${user_time//:/-}-00"
     day_name="Sunday"  # Defaulting to Sunday, adjust as needed
@@ -83,25 +84,20 @@ else
     echo "Auto-detected: $day_name ($weekday_target), $start_time"
 fi
 
-rm krcl_shows.html schedule.tsv
-
 base_url="https://krcl-media.s3.us-west-000.backblazeb2.com/audio/$selected_show"
-
 mkdir -p "$selected_show"
 cd "$selected_show" || exit 1
-
 start_date=$(date +%Y-%m-%d)
 end_date=$(date -d "$start_date -$months months" +%Y-%m-%d)
 current_date="$start_date"
 
-# If the start time is unknown, prompt the user for input
 if [[ "$start_time" == "unknown" ]]; then
     echo "The start time for the show '$selected_show' is unknown."
-    read -p "Please enter the start time for this show (HH:MM format, 24-hour clock ie 19:00 for 7 p.m): " user_time
+    read -rp "Please enter the start time for this show (HH:MM format, 24-hour clock ie 19:00 for 7 p.m): " user_time
     # Validate user input
     while [[ ! "$user_time" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; do
         echo "Invalid time format. Please enter the time in HH:MM format (24-hour clock)."
-        read -p "Enter the start time for this show (HH:MM format, 24-hour clock): " user_time
+        read -rp "Enter the start time for this show (HH:MM format, 24-hour clock): " user_time
     done
     # Format the time into 22-00-00 format
     start_time="${user_time//:/-}-00"
@@ -110,18 +106,14 @@ fi
 while [[ "$current_date" > "$end_date" ]]; do
     weekday=$(date -d "$current_date" +%u)
     if [[ "$weekday" -eq "$weekday_target" ]]; then
-        # Replace colons in start_time with dashes for the filename
         formatted_start_time="${start_time//:/-}"
         filename="${selected_show}_${current_date}_${formatted_start_time}.mp3"
         file_url="$base_url/$filename"
-
         if [[ -f "$filename" ]]; then
             echo "Already downloaded: $filename, skipping."
         else
-            echo -n "Checking $filename... "
-            if wget --spider -q "$file_url"; then
+            if wget -q --show-progress --no-use-server-timestamps "$file_url"; then
                 echo "found! Downloading..."
-                wget -q --show-progress "$file_url"
             else
                 echo "not found, skipping."
             fi
@@ -129,5 +121,10 @@ while [[ "$current_date" > "$end_date" ]]; do
     fi
     current_date=$(date -d "$current_date -1 day" +%Y-%m-%d)
 done
-
 echo "Done!"
+
+read -rp "Download more shows? [y/N]: " answer
+case "$answer" in
+    [Yy]*) exec "$0";;
+    *) cleanup;;
+esac
